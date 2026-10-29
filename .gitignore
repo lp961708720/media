@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.local/
+.env*
+.dev.vars*
+!\.env.example
+.DS_Store
+release/
+outputs/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+vault-key.enc
+*.key
+*.pem
