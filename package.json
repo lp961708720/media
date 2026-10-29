@@ -1,6 +1,6 @@
 {
   "name": "media-studio",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
     "start": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check worker/index.js && node --check public/app.js",
+    "check": "node scripts/check.mjs",
     "desktop": "electron .",
     "dist:mac": "electron-builder --mac",
     "dist:win": "electron-builder --win",
@@ -34,12 +34,11 @@
     },
     "files": [
       "desktop/**",
-      "scripts/server.mjs",
-      "scripts/database.mjs",
       "worker/**",
       "public/**",
       "drizzle/**",
-      "package.json"
+      "package.json",
+      "scripts/*.mjs"
     ],
     "mac": {
       "category": "public.app-category.productivity",
