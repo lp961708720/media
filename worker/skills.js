@@ -111,6 +111,6 @@ export async function inspectSkill(input){
  const packed=input.zip_base64?await unpackSkill(input.zip_base64):null,markdown=packed?.markdown??input.markdown;
  const parsed=parseSkill(markdown,{metadata:packed?.metadata});validateSkillReferences(parsed.body,packed?.files||input.references||{});
  const warnings=unique([...parsed.warnings,...(packed?.ignored_files||[]).map(x=>'忽略 '+x.path+'：'+x.reason)]);
- const suggested_type=/humaniz|reduce[-_ ]ai|(?:去除|去|降低|降)\s*(?:文本中的)?\s*AI\s*(?:写作)?(?:味|痕迹)/i.test(parsed.name+' '+parsed.display_name+' '+parsed.description)?'humanize':'writing';
+ const suggested_type=/humaniz|reduce[-_ ]ai|(?:去除|去|降低|降)\s*(?:文本中的)?\s*AI\s*(?:写作)?(?:味|痕迹)/i.test(parsed.name+' '+parsed.display_name+' '+parsed.description)?'humanize':/拆解|breakdown|decomposition/i.test(parsed.name+' '+parsed.display_name+' '+parsed.description)?'breakdown':'writing';
  return {suggested_type,parsed,markdown:parsed.canonical_markdown,source_markdown:markdown,references:packed?.files||input.references||{},import_info:{main_path:packed?.main_path||input.source||'SKILL.md',ignored_files:packed?.ignored_files||[],ignored_metadata:parsed.ignored_metadata,warnings,metadata:packed?.metadata||{}}};
 }
