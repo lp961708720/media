@@ -40,7 +40,7 @@ export async function handleRuns(ctx){
  const route=routing.find(x=>x[0]);if(!route)throw problem(400,'请先配置并选择模型');const p=await record(route[0],'provider',null);if(p.data.protocol==='image')throw problem(400,'图像模型不能用于文本任务');if(!p.data.enabled||p.deleted)throw problem(400,'模型配置已停用');
  let skill=null,human=null,postSkill=null,sourceRun=null;
  if(!ctx.creative&&c.data.writing_skill_version_id&&!['humanize','postprocess','report','research','comment_reply','review'].includes(action))skill=await skillByVersion(c.data.writing_skill_version_id,aid,c.data.platform,'writing');
- if(c.data.humanize_enabled&&['draft','project_draft','rewrite','rewrite_selection','adapt','resume'].includes(action)||action==='humanize')human=await skillByVersion(c.data.humanize_skill_version_id,aid,c.data.platform,'humanize');
+ if((b.skip_automatic_humanize!==true&&c.data.humanize_enabled&&['draft','project_draft','rewrite','rewrite_selection','adapt','resume'].includes(action))||action==='humanize')human=await skillByVersion(c.data.humanize_skill_version_id,aid,c.data.platform,'humanize');
  const refs=[],sources=[];let selection=null,sourceBody=c.data.body||'',prefix='';
  if(action==='postprocess'){
   if(!['humanize','editing','writing'].includes(b.postprocess_skill_type))throw problem(400,'请选择写作、编辑或去 AI 味 Skill');

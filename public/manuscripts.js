@@ -37,21 +37,25 @@ executeAI=async function(action,extra={}){
 runAI=executeAI;
 act['ai-humanize']=()=>openPostprocess();
 act['postprocess-current']=()=>openPostprocess();
+act['humanize-current']=()=>openPostprocess(undefined,{humanizeOnly:true});
 act['postprocess-run']=e=>openPostprocess(dataId(e));
-async function openPostprocess(runId){
+async function openPostprocess(runId,{humanizeOnly=false}={}){
  await flush();const c=state.studio;if(!c)throw Error('请先打开稿件');
  const source=runId?state.runs.find(r=>r.id===runId):null;
  if(runId&&!completeArticle(source))throw Error('请选择已完整生成的文章');
  if(!runId&&!c.data.body?.trim())throw Error('正文为空，请先载入生成文章，或从生成记录选择后续处理');
- const skills=(await records('skill')).filter(s=>s.data.enabled&&['humanize','editing','writing'].includes(s.data.skill_type)&&(s.data.platform==='all'||s.data.platform===c.data.platform));
+ const skills=(await records('skill')).filter(s=>s.data.enabled&&(humanizeOnly?s.data.skill_type==='humanize':['humanize','editing','writing'].includes(s.data.skill_type))&&(s.data.platform==='all'||s.data.platform===c.data.platform));
  const providers=(await records('provider')).filter(p=>p.data.enabled&&p.data.protocol!=='image');
  if(!skills.length){modal('后续 Skill 处理',`<div class="notice">还没有适用于${esc(platform(c.data.platform))}的写作、编辑或去 AI 味 Skill。请在 Skill 中心导入或启用规则，并检查适用平台。</div>`,null);return;}
- modal('后续 Skill 处理',`<div class="notice">处理来源：${source?'已保存的生成文章 · '+esc(fmt(source.created_at)):'当前已保存正文 · v'+c.revision}。结果保存为独立候选，比较并采纳后才替换正文。</div>${select('skill_version','后续 Skill',skills[0].data.version_id,skills.map(s=>[s.data.version_id,s.data.title+' · v'+s.data.version]))}${select('provider_id','处理模型',source?.data.provider_id||c.data.provider_id||'',[['','沿用当前稿件 / 账号模型路由'],...providers.map(p=>[p.id,p.data.title])])}${field('instruction','本次处理要求',$('#ai-instruction')?.value||'','textarea')}<p class="field-hint">本次只执行所选规则，不会重复运行写作和自动后处理链。费用仍按模型与预算设置检查。</p>`,async f=>{
+ const selected=skills.find(s=>s.data.version_id===c.data.humanize_skill_version_id);if(humanizeOnly&&!selected)throw Error('请先从下拉框选择去 AI 味 Skill');
+ const sourceBody=source?source.data.output:c.data.body;
+ modal(humanizeOnly?'检查后的文章 · 去 AI 味处理':'后续 Skill 处理',`<div class="notice">处理来源：${source?'已保存的生成文章 · '+esc(fmt(source.created_at)):'当前已保存正文 · v'+c.revision}。结果保存为独立候选，比较并采纳后才替换正文。</div><details><summary>核对本次处理全文（${sourceBody.replace(/\s/g,'').length} 字）</summary><div class="candidate">${esc(sourceBody)}</div></details>${select('skill_version',humanizeOnly?'去 AI 味 Skill':'后续 Skill',selected?.data.version_id||skills[0].data.version_id,skills.map(s=>[s.data.version_id,s.data.title+' · v'+s.data.version]))}${select('provider_id','处理模型',source?.data.provider_id||c.data.provider_id||'',[['','沿用当前稿件 / 账号模型路由'],...providers.map(p=>[p.id,p.data.title])])}${field('instruction',humanizeOnly?'本次去 AI 味补充要求（可不填）':'本次处理要求',humanizeOnly?'':$('#ai-instruction')?.value||'','textarea')}<p class="field-hint">本次只执行所选规则，不会重复运行写作和自动后处理链。费用仍按模型与预算设置检查。</p>`,async f=>{
   if(!currentStudio(c))throw Error('当前稿件已切换，请重新选择');
   const skill=skills.find(s=>s.data.version_id===f.skill_version);if(!skill)throw Error('请选择有效 Skill');
+  if(humanizeOnly&&c.data.humanize_skill_version_id!==skill.data.version_id){c.data.humanize_skill_version_id=skill.data.version_id;c.data.humanize_enabled=false;markDirty();await flush();}
   $('#modal').close();const result=await executeAI('postprocess',{source_run_id:runId||undefined,postprocess_skill_version_id:skill.data.version_id,postprocess_skill_type:skill.data.skill_type,provider_id:f.provider_id||undefined,instruction:f.instruction});
   if(result?.status==='succeeded'&&currentStudio(c))await act['compare-run']({dataset:{id:result.id}});
- },true);$('#modal-form [type=submit]').textContent='运行 Skill 并保存候选';
+ },true);$('#modal-form [type=submit]').textContent=humanizeOnly?'执行去 AI 味并保存候选':'运行 Skill 并保存候选';
 }
 act['manuscript-runs']=async()=>{
  await flush();state.runs=await studioRuns();const runs=state.runs.filter(r=>!r.data.project_id&&!r.data.post_id);
