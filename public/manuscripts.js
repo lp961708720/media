@@ -1,4 +1,4 @@
-async function studioRuns(c=state.studio){return c?(await api('runs?accountId='+encodeURIComponent(c.account_id)+'&contentId='+encodeURIComponent(c.id))).filter(r=>!r.data.project_id&&!r.data.post_id):[];}
+async function studioRuns(c=state.studio){return c?(await api('runs?accountId='+encodeURIComponent(c.account_id)+'&contentId='+encodeURIComponent(c.id))).filter(r=>!r.data.project_id&&!r.data.post_id&&r.data.action!=='chat'):[];}
 const articleActions=new Set(['draft','rewrite','adapt','humanize','postprocess','resume']);
 function completeArticle(r){return r?.status==='succeeded'&&!r.data.partial&&!r.data.selection&&!r.data.project_id&&!r.data.post_id&&articleActions.has(r.data.action)&&!!r.data.output?.trim();}
 async function loadInitialArticle(c,runs){
@@ -12,7 +12,7 @@ pages.studio=async()=>{
  let html=await manuscriptStudioPage();if(!state.studio)return html;
  const saved=await loadInitialArticle(state.studio,state.runs);
  if(saved){state.studio=saved;state.openId=saved.id;html=await manuscriptStudioPage();}
- const runs=state.runs.filter(r=>!r.data.project_id&&!r.data.post_id),latest=runs.find(r=>completeArticle(r)||partialArticle(r));
+ const runs=state.runs.filter(r=>!r.data.project_id&&!r.data.post_id&&r.data.action!=='chat'),latest=runs.find(r=>completeArticle(r)||partialArticle(r));
  return html.replace(btn('版本历史','history-current','','ghost small'),btn('修改对比','manuscript-diff','','ghost small')+btn('生成记录（'+runs.length+'）','manuscript-runs','','ghost small')+btn('版本历史','history-current','','ghost small'))
   .replace('<input class="editor-title"',`<div class="studio-result-status"><span>正文自动保存 · v${state.studio.revision}；生成记录单独保留。</span>${latest?btn(partialArticle(latest)?'查看已返回文本':'查看最近生成文章',partialArticle(latest)?'view-partial-run':'compare-run',`data-id="${latest.id}"`,'small'):''}</div><input class="editor-title"`)
   .replace(btn('后处理正文','ai-humanize'),btn('后续 Skill 处理正文','postprocess-current'));
@@ -58,7 +58,7 @@ async function openPostprocess(runId,{humanizeOnly=false}={}){
  },true);$('#modal-form [type=submit]').textContent=humanizeOnly?'执行去 AI 味并保存候选':'运行 Skill 并保存候选';
 }
 act['manuscript-runs']=async()=>{
- await flush();state.runs=await studioRuns();const runs=state.runs.filter(r=>!r.data.project_id&&!r.data.post_id);
+ await flush();state.runs=await studioRuns();const runs=state.runs.filter(r=>!r.data.project_id&&!r.data.post_id&&r.data.action!=='chat');
  modal('当前稿件的生成记录',`<div class="notice">共 ${runs.length} 次运行。完整结果、失败时的部分输出与历史来源均保留；只列出当前稿件。</div>${runs.length?runs.map(runCard).join(''):empty('还没有生成记录','生成完成后会自动保存在这里。')}`,null,true);
 };
 act['save-run-copy']=async e=>{
@@ -124,7 +124,7 @@ function refreshManuscriptSummary(){
  if(latest&&bar){const action=partialArticle(latest)?'view-partial-run':'compare-run',label=partialArticle(latest)?'查看已返回文本':'查看最近生成文章';let link=bar.querySelector('[data-act]');if(!link)bar.insertAdjacentHTML('beforeend',btn(label,action,`data-id="${latest.id}"`,'small'));else{link.dataset.act=action;link.dataset.id=latest.id;link.textContent=label;}}
 }
 
-function partialArticle(r){return ['failed','interrupted','cancelled'].includes(r.status)&&!r.data.project_id&&!r.data.post_id&&!!(r.data.partial_output||r.data.output);}
+function partialArticle(r){return r.data.action!=='chat'&&['failed','interrupted','cancelled'].includes(r.status)&&!r.data.project_id&&!r.data.post_id&&!!(r.data.partial_output||r.data.output);}
 act['view-partial-run']=e=>{const r=state.runs.find(r=>r.id===dataId(e));if(!r||!partialArticle(r))throw Error('没有可查看的部分文本');modal('已返回部分文本 · 尚未完成',`<div class="notice">这次生成尚未完整结束，返回内容已经保存。可以免费另存为可编辑草稿；接续会发起新模型调用，并继续遵守费用预算。</div><div class="candidate">${esc(r.data.partial_output||r.data.output)}</div><div class="inline">${btn('另存为未完成草稿','save-partial-run',`type="button" data-id="${r.id}"`,'primary small')}${btn('按自动额度接续','resume-run',`type="button" data-id="${r.id}"`,'small')}${btn('复制已返回文本','copy-partial-run',`type="button" data-id="${r.id}"`,'small')}</div>`,null,true);};
 act['copy-partial-run']=async e=>{const r=state.runs.find(r=>r.id===dataId(e));if(r)await navigator.clipboard.writeText(r.data.partial_output||r.data.output||'');toast('部分文本已复制');};
 act['save-partial-run']=async e=>{await flush();const c=state.studio,saved=await api('runs/'+dataId(e)+'/save-partial?accountId='+encodeURIComponent(c.account_id),{method:'POST',body:{}});$('#modal').close();await go('studio',saved.id);toast('已另存为可编辑的未完成草稿；原稿与生成记录仍保留');};
