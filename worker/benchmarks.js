@@ -21,25 +21,25 @@ export const BREAKDOWN_FRAMEWORK=`
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'content-type':'application/json;charset=utf-8','cache-control':'no-store'}});
 const read=v=>v?{...v,data:JSON.parse(v.data)}:null;
 const hash=async v=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(v))))).map(n=>n.toString(16).padStart(2,'0')).join('');
-const text=(v,label,max=6000,empty=false)=>{if(typeof v!=='string'||v.length>max||(!empty&&!v.trim()))throw problem(422,label+'应为'+(empty?'':'非空')+'文本，最多 '+max+' 字');return v.trim();};
+const text=(v,label,empty=false)=>{if(typeof v!=='string'||(!empty&&!v.trim()))throw problem(422,label+'应为'+(empty?'':'非空')+'文本');return v.trim();};
 const object=(v,label)=>{if(!v||typeof v!=='object'||Array.isArray(v))throw problem(422,label+'应为对象');return v;};
 export function postSource(post){const d=post.data;return {title:d.title||'',url:d.url||'',article_body:d.article_body||'',cover_description:d.cover_description||'',layout_description:d.layout_description||'',comments_text:d.comments_text||''};}
 export const postSourceHash=post=>hash(postSource(post));
 export function breakdownSchema(){const finding={text:'简洁但具体的分析',status:'inferred',confidence:'medium',evidence:[{field:'article_body',quote:'逐字引用的短原文'}],suggestion:'可借鉴的方法及适用边界'};const out={summary:'文章整体判断'};for(const [group,spec]of Object.entries(BREAKDOWN_FIELDS))out[group]=Object.fromEntries(Object.keys(spec.fields).map(k=>[k,{...structuredClone(finding),text:'分析'+spec.fields[k]+'，依据不足就标未知'}]));out.takeaways=[{pattern:'可迁移的写法',adaptation:'如何用于自己的内容',boundary:'适用边界'}];out.unknowns=['仍待核实的信息'];return out;}
 export function validateBreakdown(value,source){
  let input=value;if(typeof value==='string'){try{input=JSON.parse(value.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''))}catch{throw problem(422,'拆解未返回有效结构化结果，原始输出已保留，请调整模型输出上限或重新运行')}}
- object(input,'拆解结果');const result={schema_version:1,summary:text(input.summary,'整体判断',5000)};
+ object(input,'拆解结果');const result={schema_version:1,summary:text(input.summary,'整体判断')};
  for(const [group,spec]of Object.entries(BREAKDOWN_FIELDS)){const section=object(input[group],spec.title);result[group]={};for(const [key,label]of Object.entries(spec.fields)){
   const value=object(section[key],label);if(!['observed','inferred','unknown'].includes(value.status))throw problem(422,label+'需要区分观察、推断和未知');
   if(!['high','medium','low'].includes(value.confidence))throw problem(422,label+'置信度格式无效');
-  if(!Array.isArray(value.evidence)||value.evidence.length>4)throw problem(422,label+'证据应为最多 4 项的数组');
-  const evidence=value.evidence.map(item=>{object(item,'证据');if(!['title','article_body','cover_description','layout_description','comments_text'].includes(item.field))throw problem(422,'证据字段不属于提供的材料');const quote=text(item.quote,'原文引用',600);if(!source[item.field]?.includes(quote))throw problem(422,'拆解引用与提供的原文不一致：'+label);return {field:item.field,quote};});
+  if(!Array.isArray(value.evidence))throw problem(422,label+'证据应为数组');
+  const evidence=value.evidence.map(item=>{object(item,'证据');if(!['title','article_body','cover_description','layout_description','comments_text'].includes(item.field))throw problem(422,'证据字段不属于提供的材料');const quote=text(item.quote,'原文引用');if(!source[item.field]?.includes(quote))throw problem(422,'拆解引用与提供的原文不一致：'+label);return {field:item.field,quote};});
   if(value.status!=='unknown'&&!evidence.length)throw problem(422,label+'需要给出原文依据，或明确标为未知');
-  result[group][key]={text:text(value.text,label,2500),status:value.status,confidence:value.confidence,evidence,suggestion:text(value.suggestion??'',label+'借鉴建议',2500,true)};
+  result[group][key]={text:text(value.text,label),status:value.status,confidence:value.confidence,evidence,suggestion:text(value.suggestion??'',label+'借鉴建议',true)};
  }}
- if(!Array.isArray(input.takeaways)||input.takeaways.length>15||!Array.isArray(input.unknowns)||input.unknowns.length>40)throw problem(422,'借鉴清单或未知项格式无效');
- result.takeaways=input.takeaways.map(x=>({pattern:text(x.pattern,'可迁移写法',2000),adaptation:text(x.adaptation,'适配方法',2000),boundary:text(x.boundary,'适用边界',2000)}));
- const unknowns=input.unknowns.map(x=>text(x,'未知项',2000));
+ if(!Array.isArray(input.takeaways)||!Array.isArray(input.unknowns))throw problem(422,'借鉴清单或未知项格式无效');
+ result.takeaways=input.takeaways.map(x=>({pattern:text(x.pattern,'可迁移写法'),adaptation:text(x.adaptation,'适配方法'),boundary:text(x.boundary,'适用边界')}));
+ const unknowns=input.unknowns.map(x=>text(x,'未知项'));
  if(!source.cover_description.trim()){result.title_cover.complement={text:'未提供封面或摘要的可核查描述，无法判断它们与标题的视觉配合。',status:'unknown',confidence:'low',evidence:[],suggestion:'补充封面与摘要描述后再分析。'};unknowns.push('未提供封面信息，未实际查看封面图片');}
  if(!source.layout_description.trim()){result.style.visual={text:'未提供原文的视觉排版描述，无法判断实际字号、加粗、配图密度和图片风格。',status:'unknown',confidence:'low',evidence:[],suggestion:'补充排版说明；文字段落节奏可以单独分析。'};unknowns.push('未提供视觉排版信息，不能仅凭纯文本判断实际渲染样式');}
  if(!source.comments_text.trim())unknowns.push('未提供评论区，无法判断实际留言反馈或作者回复策略');
@@ -60,14 +60,14 @@ export async function benchmarkRoutes(c){
   const saved=await c.save(post,{...post.data,summary:report.summary,hook:report.structure.opening.text,analysis:breakdownMarkdown(report),ai_breakdown:{run_id:run.id,source_hash:sourceHash,source_revision:run.data.post_source_revision,report,confirmed_at:new Date().toISOString(),skill_version_id:run.data.task_skill_snapshot?.version_id||null}},post.revision,'benchmark.ai.confirm');return json({post:saved});
  }
  if(path[2]!=='run'||method!=='POST')throw problem(404,'对标拆解操作不存在');
- if(b.post_revision!==post.revision)throw problem(409,'文章已有变化，请先保存并刷新');if(!source.article_body.trim())throw problem(400,'请粘贴原文内容，链接本身不会自动抓取');if(source.article_body.length>80000)throw problem(400,'单次拆解正文最多 8 万字，请拆分材料');
+ if(b.post_revision!==post.revision)throw problem(409,'文章已有变化，请先保存并刷新');if(!source.article_body.trim())throw problem(400,'请粘贴原文内容，链接本身不会自动抓取');
  try{const url=new URL(source.url);if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw 0}catch{throw problem(400,'请提供有效的原文 http/https 链接')}
  if(!b.skill_version_id)throw problem(400,'请选择一份拆解 Skill');
  let skill;try{skill=await c.skillByVersion(b.skill_version_id,aid,account.platform,'breakdown')}catch(e){if(e.status!==400||e.message!=='Skill 类型不匹配')throw e;skill=await c.skillByVersion(b.skill_version_id,aid,account.platform,'research')}
  let anchor=read(await sql("SELECT * FROM records WHERE owner_id=? AND account_id=? AND kind='content' AND deleted=0 AND json_extract(data,'$.analysis_post_id')=? ORDER BY created_at LIMIT 1",owner,aid,post.id).first());
  if(!anchor)anchor=await c.create('content',aid,{title:'对标拆解 · '+source.title,body:'',summary:'',platform:account.platform,system_task:true,analysis_post_id:post.id,writing_skill_version_id:null,humanize_enabled:false},'benchmark.analysis_anchor');
  const input={account:{name:account.name,platform:account.platform},source,allowed_source_ids:[post.id],limitations:['原文链接仅作来源记录，未自动访问','图片像素未发送给模型','身份画像和文章效果需要证据与实测'],active_rules:[]};
- const creative={post_id:post.id,task:BREAKDOWN_ACTION,task_skill:skill.data,source_ids:[post.id],input_snapshot:input,dependencies:[{type:'benchmark_source',post_id:post.id,source_hash:sourceHash}],instruction:BREAKDOWN_INSTRUCTION+'\n'+BREAKDOWN_FRAMEWORK+'\n请简洁逐项回答：每项分析建议 80 字以内，建议 40 字以内；每项 evidence 最多 1 条、引句尽量不超过 60 字，避免重复解释规则。只输出下列字段的 JSON，不输出代码围栏：\n'+JSON.stringify(breakdownSchema())+'\n用户补充要求：'+String(b.instruction||'').slice(0,6000),
+ const creative={post_id:post.id,task:BREAKDOWN_ACTION,task_skill:skill.data,source_ids:[post.id],input_snapshot:input,dependencies:[{type:'benchmark_source',post_id:post.id,source_hash:sourceHash}],instruction:BREAKDOWN_INSTRUCTION+'\n'+BREAKDOWN_FRAMEWORK+'\n按所选 Skill 和本次要求逐项完整分析，不人为压缩分析或限制字数；引句须来自提供的原文，避免重复解释规则。只输出下列字段的 JSON，不输出代码围栏：\n'+JSON.stringify(breakdownSchema())+'\n用户补充要求：'+String(b.instruction||''),
   async prepareOutput(output){return {structured:validateBreakdown(output,source),artifact_ids:[],statements:[]};}};
- return c.handleRuns({...c,path:['runs'],method:'POST',creative,body:async()=>({content_id:anchor.id,source_revision:anchor.revision,action:BREAKDOWN_ACTION,provider_id:b.provider_id||null,max_tokens:Number(b.max_tokens)||0,thinking_mode:b.thinking_mode||'auto',parameters:b.parameters||{},allow_fallback:!!b.allow_fallback,instruction:String(b.instruction||'').slice(0,6000),post_source_revision:post.revision,post_source_hash:sourceHash})});
+ return c.handleRuns({...c,path:['runs'],method:'POST',creative,body:async()=>({content_id:anchor.id,source_revision:anchor.revision,action:BREAKDOWN_ACTION,provider_id:b.provider_id||null,max_tokens:Number(b.max_tokens)||0,thinking_mode:b.thinking_mode||'auto',parameters:b.parameters||{},allow_fallback:!!b.allow_fallback,instruction:String(b.instruction||''),post_source_revision:post.revision,post_source_hash:sourceHash})});
 }

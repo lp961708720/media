@@ -26,8 +26,8 @@ export const schemaExamples = {
 };
 
 const isObject=v=>v&&typeof v==='object'&&!Array.isArray(v);
-function text(v,name,{optional=false,max=6000}={}) {
-  if(typeof v!=='string'||v.length>max||(!optional&&!v.trim()))throw problem(422,name+'应为'+(optional?'':'非空')+'文本，且不超过 '+max+' 字');
+function text(v,name,{optional=false}={}) {
+  if(typeof v!=='string'||(!optional&&!v.trim()))throw problem(422,name+'应为'+(optional?'':'非空')+'文本');
   return v.trim();
 }
 function array(v,name,max=40){if(!Array.isArray(v)||v.length>max)throw problem(422,name+'应为不超过 '+max+' 项的数组');return v;}
@@ -41,7 +41,7 @@ export function paragraphs(body){
   const result=[];for(const m of String(body).matchAll(/[^\r\n]+(?:\r?\n(?![ \t]*\r?\n)[^\r\n]+)*/g)){if(!m[0].trim())continue;result.push({id:'p'+String(result.length+1).padStart(4,'0'),start:m.index,end:m.index+m[0].length,text:m[0]});}return result;
 }
 export function parseCreativeOutput(task,output,context={}) {
-  if(task==='project_draft'){if(typeof output!=='string'||!output.trim()||output.length>200000)throw problem(422,'初稿为空或过大');return {body:output};}
+  if(task==='project_draft'){if(typeof output!=='string'||!output.trim())throw problem(422,'初稿为空');return {body:output};}
   let v;try{const raw=String(output).trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');v=JSON.parse(raw);}catch{throw problem(422,'模型未返回有效 JSON，原始结果已保留，请重试或手工整理');}
   return validateCreativePayload(task,v,context);
 }

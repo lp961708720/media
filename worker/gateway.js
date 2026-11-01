@@ -38,7 +38,7 @@ export async function decodeSSE(response,protocol,onDelta,signal){
   if(e.usage){usage=tokenUsage(e.usage,protocol);reported=true}const finish=e.choices?.[0]?.finish_reason;if(finish){finishReason=finish;finished=true;terminalError=finish!=='stop'}
  }
  // Save the current event's text before acting on its finish reason. Usage may arrive next.
- if(delta){output+=delta;if(output.length>200000)throw problem(413,'模型输出过大');await onDelta?.(delta,output)}
+ if(delta){output+=delta;await onDelta?.(delta,output)}
  }
  try{while(true){if(signal?.aborted)throw signal.reason||problem(499,'任务已取消');const r=await reader.read();if(r.done)break;pending+=decoder.decode(r.value,{stream:true});let m;while((m=pending.match(/\r?\n\r?\n/))){const block=pending.slice(0,m.index);pending=pending.slice(m.index+m[0].length);await event(block)}}pending+=decoder.decode();if(pending.trim())await event(pending);if(terminalError)throw failure(meta(),output);if(!finished)throw failure(meta(),output,'模型流中断，'+(output?'已返回的部分正文已保留':'尚未返回可用正文'));if(!output.trim())throw failure(meta(),output,'模型未返回可用正文'+(reasoning?'（仅检测到推理阶段活动）':''));return {output,usage,usage_reported:reported};}catch(e){if(signal?.aborted)throw problem(499,'任务已取消');if(e.model_meta||e.status)throw e;throw failure(meta(),output,'模型流中断，'+(output?'已返回的部分正文已保留':'尚未返回可用正文'));}finally{try{await reader.cancel()}catch{}reader.releaseLock()}
 }
@@ -54,14 +54,14 @@ export async function requestModel({provider:p,secret,messages,maxTokens,onDelta
  else if(protocol==='anthropic'){headers['x-api-key']=secret;headers['anthropic-version']='2023-06-01';endpoint=base+'/messages';Object.assign(payload,{system:messages[0].content,messages:messages.slice(1),max_tokens:maxTokens,stream})}
  else {if(secret)headers.authorization='Bearer '+secret;endpoint=base+'/chat/completions';Object.assign(payload,{messages,stream,[d.token_parameter==='max_completion_tokens'?'max_completion_tokens':'max_tokens']:maxTokens});if(stream)payload.stream_options={include_usage:true}}
  let resp;try{resp=await fetcher(endpoint,{method:'POST',headers,body:JSON.stringify(payload),redirect:'manual',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(Number(d.timeout_ms)||120000)]):AbortSignal.timeout(Number(d.timeout_ms)||120000),allowLoopback:!!d.allow_loopback})}catch(e){if(signal?.aborted)throw problem(499,'任务已取消');throw problem(502,e.name==='TimeoutError'?'模型调用超时':'模型网络连接失败')}
- if(!resp.ok)throw problem(502,({400:'模型参数不兼容',401:'API Key 无效',403:'模型访问权限不足',404:'模型或端点不存在',429:'限流或额度不足'}[resp.status]||'供应商错误')+'（HTTP '+resp.status+'）');
+ if(!resp.ok){let contextLimit=resp.status===413;if([400,413,422].includes(resp.status)){try{const detail=await resp.json(),info=String(detail.error?.code||'')+' '+String(detail.error?.message||detail.message||'');contextLimit||=/context_length|context window|maximum context|too many tokens|prompt.{0,30}too long|input.{0,30}too long|上下文|输入.{0,8}(超长|过长|超出)/i.test(info)}catch{}}throw problem(502,contextLimit?'输入超过供应商模型的上下文容量；完整原文已保留，可自行选择更大上下文模型或分段。':({400:'模型参数不兼容',401:'API Key 无效',403:'模型访问权限不足',404:'模型或端点不存在',429:'限流或额度不足'}[resp.status]||'供应商错误')+'（HTTP '+resp.status+'）');}
  if(resp.headers.get('content-type')?.includes('text/event-stream'))return decodeSSE(resp,protocol,onDelta,signal);
  const r=await resp.json();let output='',finishReason=null,reasoning=false;const rawUsage=r.usage||r.usageMetadata,usage=tokenUsage(rawUsage||{},protocol);
  if(protocol==='gemini'){const candidate=r.candidates?.[0],parts=candidate?.content?.parts||[];output=visibleText(parts);reasoning=parts.some(p=>p.thought&&p.text);finishReason=candidate?.finishReason||null}
  else if(protocol==='responses'){output=responseText(r);finishReason=r.status==='incomplete'?(r.incomplete_details?.reason||'incomplete'):r.error?'error':null;reasoning=r.output?.some(p=>p.type==='reasoning')||false}
  else if(protocol==='anthropic'){output=r.content?.filter(x=>x.type==='text').map(x=>x.text).join('\n')||'';finishReason=r.stop_reason||null;reasoning=r.content?.some(p=>p.type==='thinking')||false}
  else {output=visibleText(r.choices?.[0]?.message?.content);finishReason=r.choices?.[0]?.finish_reason||null;reasoning=!!r.choices?.[0]?.message?.reasoning_content}
- if(output.length>200000)throw problem(413,'模型输出过大');if(output)await onDelta?.(output,output);
+ if(output)await onDelta?.(output,output);
  const meta={finish_reason:finishReason,usage,usage_reported:!!rawUsage,reasoning_received:reasoning||usage.reasoning_tokens>0};
  if(finishReason&&!['stop','STOP','end_turn','stop_sequence','completed'].includes(finishReason))throw failure(meta,output);if(!output.trim())throw failure(meta,output,'模型未返回可用正文'+(reasoning?'（仅检测到推理阶段活动）':''));return {output,usage,usage_reported:!!rawUsage};
 }
