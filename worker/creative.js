@@ -138,10 +138,29 @@ export async function publicationCreativeSnapshot(c,content) {
   return {accepted_draft_context:run?.data.creative_input_snapshot||null,body_changed_since_ai_candidate:run?![run.data.output,run.data.draft].includes(content.data.body):null,image_metadata,project_id:p.id,account:accountProfile(await c.account(content.account_id)),cards,rules:(await s.activeRules('draft')).map(r=>({id:r.id,revision:r.revision,version:r.data.version,payload:r.data.payload})),captured_at:now(),accepted_run_id:content.data.accepted_run_id||null,accepted_artifact_id:content.data.creative_apply_id||null};
 }
 
+// One source description is used by both the article inspector and ordinary writing calls.
+export async function articleResearchContext(c,content,{strict=false}={}) {
+ const p=row(await c.sql('SELECT * FROM creative_projects WHERE owner_id=? AND account_id=? AND content_id=?',c.owner,c.aid,content.id).first());
+ const mode=content.data.article_mode|| (p?'research':'quick'),context={mode,project_id:p?.id||null,project_revision:p?.revision||null,goal:p?.data.goal||'',notes:p?.data.notes||'',sources:[],cards:{}},omitted=[],warnings=[];
+ if(p){
+  const refs=[...(p.data.post_ids||[]).map(id=>({id,kind:'post'})),...(p.data.asset_ids||[]).map(id=>({id,kind:'asset'}))];
+  const seen=new Set();for(const ref of refs){if(seen.has(ref.id))continue;seen.add(ref.id);const r=await c.record(ref.id,ref.kind,c.aid);if(r.deleted){warnings.push('选定资料已删除：'+(r.data.title||r.id));omitted.push({id:r.id,title:r.data.title,reason:'资料已删除'});continue;}
+   let data={...r.data};delete data.data_uri;delete data.image_snapshots;delete data.image_snapshot_hashes;let stale=false;
+   if(ref.kind==='post'){const analysis=await confirmedPostAnalysis(r);stale=!!analysis&&!analysis.fresh;data={...postSource(r),manual_notes:analysis?'':r.data.analysis||'',confirmed_analysis:analysis?{run_id:analysis.run_id,fresh:analysis.fresh,report:analysis.report,skill_name:analysis.skill_name,skill_version:analysis.skill_version}:null};if(stale)warnings.push('对标原文已变化，请重新拆解并确认：'+r.data.title);}
+   context.sources.push({id:r.id,type:ref.kind,revision:r.revision,title:r.data.title,data,stale});
+  }
+  const s=service(c);for(const kind of ['audience','brief']){const a=await s.active(p.id,kind);if(a){const fresh=await s.assess(a);if(fresh.stale){warnings.push((kind==='audience'?'人群卡':'写作卡')+'输入已变化，请核对后重新确认');omitted.push({id:a.id,kind,reason:'已确认卡片的来源已变化'});}else context.cards[kind]={id:a.id,revision:a.revision,payload:a.data.payload};}else omitted.push({kind,reason:'尚未确认；快捷写作无需填写'});}
+ }
+ if(mode==='research'&&strict&&warnings.length)throw problem(409,warnings.join('；'));
+ if(mode==='quick'&&p)omitted.push({kind:'project_research',reason:'本篇采用快捷写作，项目对标、人群卡和写作卡暂不带入；已关联灵感和显式素材仍按原选择引用'});
+ return {mode,project:p,context,omitted,warnings,included:mode==='research',hash:mode==='research'?await creativeHash(context):null};
+}
+
 export async function creativeRoutes(c) {
   const {path,method,aid,owner,sql,all,body,env}=c;
-  if(!['creative-projects','creative-artifacts','creative-rules','creative-catalog'].includes(path[0]))return null;
+  if(!['article-context','creative-projects','creative-artifacts','creative-rules','creative-catalog'].includes(path[0]))return null;
   if(!aid)throw problem(400,'请选择当前账号');const account=await c.account(aid),s=service(c);
+  if(path[0]==='article-context'&&method==='GET'){const content=await c.record(path[1],'content',aid);if(content.deleted)throw problem(404,'稿件已移入回收站');return json(await articleResearchContext(c,content));}
   if(path[0]==='creative-catalog'&&method==='GET')return json({tasks:CREATIVE_TASKS,dimensions:DIAGNOSTIC_DIMENSIONS,packs:creativePacks});
   if(path[0]==='creative-rules'&&method==='GET'){const rules=(await all("SELECT * FROM creative_artifacts WHERE owner_id=? AND account_id=? AND kind='rule' ORDER BY updated_at DESC,rowid DESC",owner,aid)).map(row);return json(await Promise.all(rules.map(async a=>({...a,assessment:await s.assess(a)}))));}
   if(path[0]==='creative-projects'&&method==='GET') {
