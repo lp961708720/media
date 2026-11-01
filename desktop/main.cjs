@@ -1,6 +1,7 @@
-const {app,BrowserWindow,Menu,shell,safeStorage,dialog}=require('electron');
+const {app,BrowserWindow,Menu,shell,safeStorage,dialog,ipcMain,clipboard}=require('electron');
 const fs=require('node:fs'),path=require('node:path'),{randomBytes}=require('node:crypto');
 app.setName('Media Studio');if(process.env.MEDIA_STUDIO_DATA_DIR){app.setPath('userData',path.resolve(process.env.MEDIA_STUDIO_DATA_DIR));}let backend,win,closing=false,vaultTask=null;
+require('./clipboard.cjs')({ipcMain,clipboard,getWindow:()=>win,getOrigin:()=>backend?.origin});
 const single=app.requestSingleInstanceLock();if(!single)app.quit();
 app.on('second-instance',()=>{if(win){if(win.isMinimized())win.restore();win.focus()}});
 async function getKey(dir){const file=path.join(dir,'vault-key.enc');
@@ -11,7 +12,7 @@ const key=randomBytes(32).toString('base64'),result=await safeStorage.encryptStr
 }
 if(!safeStorage.isEncryptionAvailable())throw new Error('系统安全存储不可用');if(fs.existsSync(file))return safeStorage.decryptString(fs.readFileSync(file));const key=randomBytes(32).toString('base64');fs.writeFileSync(file,safeStorage.encryptString(key),{mode:0o600});return key;
 }
-async function createWindow(){win=new BrowserWindow({width:1480,height:960,minWidth:800,minHeight:600,title:'Media Studio · 自媒体工作台',backgroundColor:'#f7f8fa',autoHideMenuBar:true,webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true}});const session=win.webContents.session;session.setPermissionRequestHandler((wc,permission,callback)=>callback(false));await session.cookies.set({url:backend.origin,name:'ms_session',value:backend.token,httpOnly:true,sameSite:'strict'});
+async function createWindow(){win=new BrowserWindow({width:1480,height:960,minWidth:800,minHeight:600,title:'Media Studio · 自媒体工作台',backgroundColor:'#f7f8fa',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true}});const session=win.webContents.session;session.setPermissionRequestHandler((wc,permission,callback)=>callback(false));await session.cookies.set({url:backend.origin,name:'ms_session',value:backend.token,httpOnly:true,sameSite:'strict'});
 win.webContents.setWindowOpenHandler(({url})=>{try{const parsed=new URL(url);if(['https:','http:'].includes(parsed.protocol)&&parsed.origin!==backend.origin)shell.openExternal(url)}catch{}return {action:'deny'}});
 win.webContents.on('will-navigate',(event,url)=>{if(new URL(url).origin!==backend.origin)event.preventDefault()});win.webContents.on('will-attach-webview',event=>event.preventDefault());
 session.on('will-download',(event,item)=>{item.setSaveDialogOptions({title:'导出文件',defaultPath:path.join(app.getPath('downloads'),path.basename(item.getFilename()))})});
