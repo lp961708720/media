@@ -35,16 +35,18 @@ export function parseSkill(markdown,{metadata={}}={}){
  if(!/^[\w.-]{1,60}$/.test(version))fail('Skill version 只支持 1–60 位字母、数字、点、下划线或连字符');
  if(display.length>300||meta.description.length>12000)fail('Skill 显示名称或描述过长');
  if(!m[2].trim())fail('规则正文不能为空');
- if(/(?:\]\(|`)(?:\.\.\/|\/(?:etc|Users|home|tmp)\/)|\bscripts\//i.test(m[2]))fail('Skill 正文引用了越界路径或 scripts/ 程序；工作台仅支持文本规则');
+ if(/(?:\]\(|`)(?:\.\.\/|\/(?:etc|Users|home|tmp)\/)/i.test(m[2]))fail('Skill 正文引用了越界路径；工作台仅支持包内附件');
+ if(/\bscripts\//i.test(m[2]))warnings.push('包含脚本操作说明；脚本附件仅保存，不执行，不自动调用外部服务或支付');
  if(ignored.length)warnings.push('已忽略辅助元数据：'+unique(ignored).join('、')+'；不会据此启用工具、命令或文件访问');
  const canonical='---\nname: '+meta.name+'\ndisplay_name: '+JSON.stringify(display)+'\ndescription: '+JSON.stringify(meta.description)+'\nversion: '+JSON.stringify(version)+'\n---\n'+m[2];
  return {name:meta.name,display_name:display,description:meta.description,version,body:m[2],markdown,canonical_markdown:canonical,warnings,ignored_metadata:unique(ignored)};
 }
-function safePath(name){
+export function safePath(name){
  if(!name||name.startsWith('/')||name.includes('\\')||name.includes(':')||/[\x00-\x1f\x7f]/.test(name)||name.split('/').some(x=>x==='..'||x==='.') )fail('ZIP 含不安全路径：'+name.slice(0,150));
 }
 const noise=name=>name.startsWith('__MACOSX/')||name.split('/').at(-1)==='.DS_Store'||name.split('/').at(-1).startsWith('._');
 const metadataFile=name=>/(?:^|\/)(?:_meta|metadata|manifest|skill|package)\.json$/i.test(name)||/(?:^|\/)agents\/openai\.ya?ml$/i.test(name);
+const programFile=name=>/\.(?:py|js|mjs|cjs|ts|sh|bash|zsh|ps1|bat|cmd)$/i.test(name);
 const textFile=name=>/\.(md|txt)$/i.test(name)||/(?:^|\/)(?:LICENSE|COPYING|NOTICE)(?:\.[\w-]+)?$/i.test(name);
 export function crc32(bytes){let crc=0xffffffff;for(const b of bytes){crc^=b;for(let i=0;i<8;i++)crc=(crc>>>1)^((crc&1)?0xedb88320:0)}return (crc^0xffffffff)>>>0;}
 export async function unpackSkill(base64){
@@ -67,19 +69,19 @@ export async function unpackSkill(base64){
   if(noise(name)){ignored.push({path:name,reason:'系统附带文件'});continue}
   if(name.split('/').some(x=>x.startsWith('.')))fail('ZIP 含不支持的隐藏路径：'+name);
   if(name.endsWith('/'))continue;
-  if(/(?:^|\/)scripts\//i.test(name)||/\.(?:py|js|mjs|cjs|ts|sh|bash|zsh|ps1|bat|cmd|exe|dll|so|dylib|wasm)$/i.test(name))fail('不支持的程序文件：'+name+'；当前工作台只导入文本规则，不运行 Skill 程序');
-  const meta=metadataFile(name);if(!meta&&!textFile(name))fail('不支持的 Skill 附件：'+name+'；支持 Markdown/TXT、许可证和常见包元数据');
+  if(/\.(?:exe|dll|so|dylib|wasm)$/i.test(name))fail('不支持的二进制程序文件：'+name);
+  const program=programFile(name)||/(?:^|\/)scripts\//i.test(name),meta=!program&&metadataFile(name);if(!meta&&!program&&!textFile(name))fail('不支持的 Skill 附件：'+name+'；支持 Markdown/TXT、许可证和常见包元数据');
   total+=uncomp;if(entries.length>=32||uncomp>200000||total>500000||uncomp/Math.max(size,1)>100)fail('ZIP 文件数量、解压大小或压缩比超限');
   if(offset+30>directory||dv.getUint32(offset,true)!==0x04034b50)fail('ZIP 文件头损坏：'+name);
   const localLen=dv.getUint16(offset+26,true),localExtra=dv.getUint16(offset+28,true),start=offset+30+localLen+localExtra;
   if(start+size>directory)fail('ZIP 文件被截断：'+name);
   if(decode(bytes.slice(offset+30,offset+30+localLen),'ZIP 本地文件名')!==name||dv.getUint16(offset+6,true)!==flag||dv.getUint16(offset+8,true)!==method)fail('ZIP 文件头与目录不一致：'+name);
   if(!(flag&8)&&(dv.getUint32(offset+14,true)!==crc||dv.getUint32(offset+18,true)!==size||dv.getUint32(offset+22,true)!==uncomp))fail('ZIP 本地文件大小或校验值不一致：'+name);
-  entries.push({name,method,crc,size,uncomp,start,meta});
+  entries.push({name,method,crc,size,uncomp,start,meta,program});
  }
  if(pos!==directory+directorySize)fail('ZIP 中央目录长度不一致');
  const mains=entries.filter(x=>/(^|\/)SKILL\.md$/i.test(x.name));if(mains.length!==1)fail('ZIP 必须恰好包含一个 SKILL.md');
- const main=mains[0],root=main.name.slice(0,main.name.lastIndexOf('/')+1),files=Object.create(null),metadata=Object.create(null);
+ const main=mains[0],root=main.name.slice(0,main.name.lastIndexOf('/')+1),files=Object.create(null),attachments=Object.create(null),metadata=Object.create(null);
  for(const entry of entries){
   let out=bytes.slice(entry.start,entry.start+entry.size);
   if(entry.method===8){
@@ -93,24 +95,28 @@ export async function unpackSkill(base64){
    ignored.push({path:entry.name,reason:'包元数据，不作为模型规则或工具权限'});
    if(/\.json$/i.test(entry.name)){try{const value=JSON.parse(content);if(value&&typeof value==='object'&&!Array.isArray(value))metadata[entry.name]=value}catch{ignored.at(-1).reason='包元数据 JSON 无效，已忽略'}}
   }else if(root&&!entry.name.startsWith(root))ignored.push({path:entry.name,reason:'位于主 Skill 目录之外'});
+  else if(entry.program){attachments[entry.name.slice(root.length)]=content;ignored.push({path:entry.name,reason:'脚本附件仅保存，不执行、不发送给模型、不自动调用外部服务或支付'});}
   else files[entry.name.slice(root.length)]=content;
  }
  const mainName=main.name.slice(root.length),markdown=files[mainName];delete files[mainName];
- return {markdown,files,metadata,main_path:main.name,ignored_files:ignored};
+ return {markdown,files,attachments,metadata,main_path:main.name,ignored_files:ignored};
 }
-export function validateSkillReferences(body,references={}){
+export function validateSkillReferences(body,references={},attachments={}){
  if(!references||typeof references!=='object'||Array.isArray(references))fail('Skill 参考文件格式无效');let total=0;const names=Object.keys(references);
  if(names.length>32)fail('Skill 参考文件最多 32 个');
  for(const [name,value]of Object.entries(references)){safePath(name);if(name.split('/').some(x=>x.startsWith('.'))||!textFile(name)||/(?:^|\/)scripts\//i.test(name)||typeof value!=='string'||value.length>200000)fail('Skill 参考文件路径、格式或大小无效：'+name);total+=value.length}
  if(total>500000)fail('Skill 参考文字总大小超限');
- const linked=[...body.matchAll(/\]\(\s*(<[^>]+>|[^\s)]+)(?:\s+["'][^)]*)?\)/g)].map(m=>m[1].replace(/^<|>$/g,''));
- for(const link of linked){if(/^(?:https?:|mailto:)|^#/i.test(link))continue;let path;try{path=decodeURIComponent(link.split('#')[0]).replace(/^\.\//,'')}catch{fail('Skill 引用编码无效：'+link)}safePath(path);if(!names.some(x=>x===path||x.endsWith('/'+path)))fail('缺失 Skill 参考文件：'+path)}
+ if(!attachments||typeof attachments!=='object'||Array.isArray(attachments))fail('脚本附件格式无效');
+ for(const [name,value]of Object.entries(attachments)){safePath(name);if(/\.(?:exe|dll|so|dylib|wasm)$/i.test(name)||!programFile(name)&&!name.startsWith('scripts/'))fail('脚本附件路径无效：'+name);if(name.split('/').some(x=>x.startsWith('.'))||typeof value!=='string'||value.length>200000)fail('脚本附件格式无效：'+name);total+=value.length;}
+ if(Object.keys(attachments).length+names.length>32||total>500000)fail('Skill 附件数量或总大小超限');
+ const linked=[...body.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g,'').matchAll(/\]\(\s*(<[^>]+>|[^\s)]+)(?:\s+["'][^)]*)?\)/g)].map(m=>m[1].replace(/^<|>$/g,''));
+ for(const link of linked){if(/^(?:https?:|mailto:)|^#/i.test(link))continue;let path;try{path=decodeURIComponent(link.split('#')[0]).replace(/^\.\//,'')}catch{fail('Skill 引用编码无效：'+link)}safePath(path);if(![...names,...Object.keys(attachments)].some(x=>x===path||x.endsWith('/'+path)))fail('缺失 Skill 参考文件：'+path)}
 }
 export async function inspectSkill(input){
  if(!input||typeof input!=='object'||Array.isArray(input))fail('Skill 导入数据格式无效');
  const packed=input.zip_base64?await unpackSkill(input.zip_base64):null,markdown=packed?.markdown??input.markdown;
- const parsed=parseSkill(markdown,{metadata:packed?.metadata});validateSkillReferences(parsed.body,packed?.files||input.references||{});
+ const parsed=parseSkill(markdown,{metadata:packed?.metadata});validateSkillReferences(parsed.body,packed?.files||input.references||{},packed?.attachments||input.attachments||{});
  const warnings=unique([...parsed.warnings,...(packed?.ignored_files||[]).map(x=>'忽略 '+x.path+'：'+x.reason)]);
  const suggested_type=/humaniz|reduce[-_ ]ai|(?:去除|去|降低|降)\s*(?:文本中的)?\s*AI\s*(?:写作)?(?:味|痕迹)/i.test(parsed.name+' '+parsed.display_name+' '+parsed.description)?'humanize':/拆解|breakdown|decomposition/i.test(parsed.name+' '+parsed.display_name+' '+parsed.description)?'breakdown':'writing';
- return {suggested_type,parsed,markdown:parsed.canonical_markdown,source_markdown:markdown,references:packed?.files||input.references||{},import_info:{main_path:packed?.main_path||input.source||'SKILL.md',ignored_files:packed?.ignored_files||[],ignored_metadata:parsed.ignored_metadata,warnings,metadata:packed?.metadata||{}}};
+ return {suggested_type,parsed,markdown:parsed.canonical_markdown,source_markdown:markdown,references:packed?.files||input.references||{},attachments:packed?.attachments||input.attachments||{},import_info:{main_path:packed?.main_path||input.source||'SKILL.md',ignored_files:packed?.ignored_files||[],ignored_metadata:parsed.ignored_metadata,warnings,metadata:packed?.metadata||{}}};
 }
