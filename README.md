@@ -1,4 +1,4 @@
-# Media Studio 0.4.0 · 个人本机版
+# Media Studio 0.4.1 · 个人本机版
 
 适用于 macOS Apple Silicon / Intel 与 Windows x64 的自媒体创作工作台。内容、图片、历史版本和备份保存在自己的电脑；AI 调用使用你配置的服务商或本机模型。应用不自动向公众号、小红书发文。
 
@@ -134,3 +134,7 @@ node scripts/package-portable.mjs darwin arm64 /path/to/runtime.zip /path/to/che
 - `tests/`：41 项核心与个人功能测试，包括中断、隔离、预算、迁移和备份哈希。
 
 接口实现参考 [OpenAI Responses 流式文档](https://developers.openai.com/api/docs/guides/streaming-responses)、[Images API](https://developers.openai.com/api/reference/resources/images/methods/generate)、[Gemini generateContent](https://ai.google.dev/api/generate-content)。模型端真实联调需使用你自己的授权与额度；测试采用受控响应，不冒充付费调用成功。
+
+## 0.4.1 输出限制修复
+
+已有模型若仍设为 3000，请在模型配置改为至少 8000（可选 16000，开启思考时按供应商能力预留更多）。拆解任务默认跟随模型上限，最低 8000，低于阈值不会调用供应商。官方 DeepSeek 混合模型 Chat 接口的默认拆解关闭思考，可在高级设置切换；其他平台不自动发送该专用参数。供应商返回的部分正文先保存再标记失败，推理阶段只记录状态和 Token 数。预算不会自动提高，截断报告不可确认。
