@@ -1,4 +1,6 @@
+import {conversationSkill} from './conversations.js';
 import {problem} from './gateway.js';
+import {requiresRedfox} from './skill-tools.js';
 const endpoint='https://redfox.hk/story/api/gzh/search/hotArticleNew';
 const json=value=>new Response(JSON.stringify(value),{headers:{'content-type':'application/json;charset=utf-8','cache-control':'no-store'}});
 export async function redfoxRoutes(c){
@@ -17,7 +19,8 @@ export async function redfoxRoutes(c){
  if(c.path[1]!=='search'||c.method!=='POST')throw problem(404,'Redfox 操作不存在');
  if(!c.aid)throw problem(400,'请选择保存素材的账号');const account=await c.account(c.aid);if(account.status!=='active')throw problem(400,'账号已停用');
  const b=await c.body();if(b.consume_points!==true)throw problem(400,'请明确确认本次查询可能消耗 Redfox 积分');
- if(b.content_id)await c.record(b.content_id,'content',c.aid);
+ const content=b.content_id?await c.record(b.content_id,'content',c.aid):null;let query=null;
+ if(b.writing_skill_version_id){if(!content)throw problem(400,'请选择本次写作的文章');const skill=b.writing_action==='conversation'?await conversationSkill(c,b.writing_skill_version_id):await c.skillByVersion(b.writing_skill_version_id,c.aid,content.data.platform,'writing');if(!requiresRedfox(skill))throw problem(400,'只有指定的 wechat-write Skill 会自动检索红狐');if(!['draft','rewrite','rewrite_selection','outline','titles','adapt','resume','postprocess','conversation'].includes(b.writing_action))throw problem(400,'此操作不需要写作检索');if(b.writing_action==='conversation'&&!content.data.conversation_thread)throw problem(400,'请从独立对话执行此任务');if(!['postprocess','conversation'].includes(b.writing_action)&&content.data.writing_skill_version_id!==skill.data.version_id)throw problem(409,'写作 Skill 已变化，请重新执行');query={id:crypto.randomUUID(),content_id:content.id,source_revision:content.revision,skill_version_id:skill.data.version_id,action:b.writing_action};}
  const keyword=typeof b.keyword==='string'?b.keyword.trim():'';
  if(!keyword||keyword.length>200||keyword.split(',').filter(x=>x.trim()).length>5)throw problem(400,'Redfox 接口要求：1–5 个英文逗号分隔关键词，总长度不超过 200 字符');
  const days=Number(b.days||7);if(![7,30].includes(days))throw problem(400,'请选择近 7 天或近 30 天');
@@ -39,6 +42,6 @@ export async function redfoxRoutes(c){
   articles.push(article);
  }
  const snapshot={source:'Redfox公众号爆款搜索接口',endpoint,keyword,startDate,endDate,fetched_at:new Date().toISOString(),articles,limitations:['接口只提供标题、摘要与互动快照，未读取完整正文、封面图片或评论区','数据是服务商返回的快照，不能据此推断因果、完读率或保证爆款效果']};
- const data={title:'Redfox 素材 · '+keyword,body:JSON.stringify(snapshot,null,2),asset_type:'text',url:'https://redfox.hk',license:'用户授权接口查询；按来源使用并核对',redfox_snapshot:snapshot};
+ const data={title:'Redfox 素材 · '+keyword,body:JSON.stringify(snapshot,null,2),asset_type:'text',url:'https://redfox.hk',license:'用户授权接口查询；按来源使用并核对',redfox_snapshot:snapshot,...(query?{redfox_query:query}:{})};
  const asset=await c.create('asset',c.aid,data,'redfox.query');await c.log('redfox.search',asset.id,c.aid,{article_count:articles.length,days}).run();return json({asset,count:articles.length,snapshot});
 }
